@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Edge AI Bridge · offscreen</title>
+  </head>
+  <body>
+    <!--
+      这个页面永远不会被用户看到（offscreen document）。
+      它的唯一作用是常驻运行，替 service worker 维持轮询循环。
+    -->
+    <script src="offscreen.js"></script>
+  </body>
+</html>

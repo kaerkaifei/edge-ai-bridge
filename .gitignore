@@ -1,0 +1,25 @@
+# 浏览器用户数据目录（独立 profile，不进仓库）
+.profile/
+
+# 运行时生成：令牌与扩展配置
+server/token.txt
+extension/config.json
+server/bridge.log
+server/bridge.log.err
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 演示产物
+examples/demo.png
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 自检产物
+examples/selftest.png
+server/*.log

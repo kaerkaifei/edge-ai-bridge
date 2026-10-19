@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #1f2328;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --accent: #4f46e5;
+        --ok: #16a34a;
+        --err: #dc2626;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1b1d22;
+          --fg: #e6e6e6;
+          --muted: #9aa0a6;
+          --line: #2c2f36;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        width: 320px;
+        margin: 0;
+        padding: 14px 16px 16px;
+        font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .2px; }
+      .sub { color: var(--muted); font-size: 11px; margin-bottom: 12px; }
+      label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+      input {
+        width: 100%; padding: 6px 8px; border: 1px solid var(--line);
+        border-radius: 6px; background: transparent; color: var(--fg);
+        font: inherit; outline: none;
+      }
+      input:focus { border-color: var(--accent); }
+      .row { display: flex; gap: 8px; margin-top: 14px; }
+      button {
+        flex: 1; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--line);
+        background: transparent; color: var(--fg); font: inherit; cursor: pointer;
+      }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button:hover { opacity: .9; }
+      .status {
+        margin-top: 14px; padding: 10px; border: 1px solid var(--line);
+        border-radius: 8px; font-size: 12px; white-space: pre-wrap; word-break: break-all;
+      }
+      .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+      .dot.on { background: var(--ok); }
+      .dot.off { background: var(--err); }
+      .tip { margin-top: 10px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+      code { background: rgba(127,127,127,.15); padding: 1px 4px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Edge AI Bridge</h1>
+    <div class="sub">本地 AI ↔ 浏览器 的控制通道</div>
+
+    <label for="port">桥接服务端口</label>
+    <input id="port" type="number" min="1" max="65535" placeholder="8800" />
+
+    <label for="token">访问令牌（服务端启动时会打印）</label>
+    <input id="token" type="text" placeholder="可留空（仅本机调试）" />
+
+    <div class="row">
+      <button id="save" class="primary">保存</button>
+      <button id="test">测试连接</button>
+    </div>
+
+    <div class="status" id="status">
+      <span class="dot"></span>尚未检测
+    </div>
+
+    <div class="tip">
+      无头模式启动：<code>launcher\launch_hidden.ps1</code><br />
+      首次安装扩展：<code>launcher\launch_setup.ps1</code>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

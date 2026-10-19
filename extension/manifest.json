@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Edge AI Bridge",
+  "version": "0.1.0",
+  "description": "让本地 AI 接管 Edge：标签页管理、页面脚本执行、内容抓取、截图。默认无窗口运行，不打扰人。",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage",
+    "offscreen",
+    "cookies",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Edge AI Bridge",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
