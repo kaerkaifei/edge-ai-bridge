@@ -19,6 +19,23 @@
 const POLL_INTERVAL = 1000; // 轮询间隔（毫秒）
 const MAX_BACKOFF = 8000;
 
+/**
+ * 浏览器名，写在实例 id 前面发给桥接服务。
+ *
+ * 为什么需要它：安装脚本要判断「即将同步的那个浏览器装没装插件」。
+ * 光看「有没有实例在线」会骗人——可能在线的是 Chrome，而用户要同步的是 Edge。
+ * navigator.userAgent 在 offscreen 文档里是可用的（和 chrome.storage 不一样）。
+ */
+const BROWSER_TAG = (() => {
+  const ua = (navigator.userAgent || "").toLowerCase();
+  if (ua.includes("edg/")) return "edge";
+  if (ua.includes("brave/")) return "brave";
+  if (ua.includes("vivaldi/")) return "vivaldi";
+  if (ua.includes("opr/")) return "opera";
+  if (ua.includes("chrome/")) return "chrome";
+  return "chromium";
+})();
+
 let iid = null;
 let busy = false;
 let backoff = POLL_INTERVAL;
@@ -27,7 +44,8 @@ let stats = { polls: 0, tasks: 0, errors: 0, lastError: "", lastTask: null };
 
 function instanceId() {
   if (!iid) {
-    iid = "i" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    // 形如 edge-ab12cd34x1kz9，前缀让服务端一眼认出浏览器
+    iid = BROWSER_TAG + "-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
   }
   return iid;
 }

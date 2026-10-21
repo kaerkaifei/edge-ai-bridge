@@ -38,13 +38,29 @@ AI 侧等超时就知道出问题了，不会静默丢任务。
 
 ### `GET /health`
 
-不需要令牌（便于脚本探活）。
+需要令牌（和其余接口一样带 `X-Bridge-Token`）。
 
 ```json
-{ "ok": true, "version": "0.1.0", "active": "iXXX", "instances": ["iXXX"], "pending": 0, "done": 3 }
+{
+  "ok": true,
+  "version": "0.2.0",
+  "active": "iXXX",
+  "instances": ["iXXX"],
+  "instances_detail": { "iXXX": { "last_seen": 1792367578.5, "browser": "edge" } },
+  "browsers": ["edge"],
+  "pending": 0,
+  "done": 3
+}
 ```
 
 `instances` 为空 = 浏览器没起来或扩展没加载。
+
+- `instances_detail` 给出每个实例（扩展的一个浏览器进程）最近一次轮询的 Unix 时间戳，
+  以及它自报的浏览器类型；判定「装没装插件」看的就是这里的时间戳是否新鲜（`launcher/check_extension.ps1`
+  用的是 60 秒窗口）。
+- `browsers` 是去重后的浏览器类型集合，方便一次问「哪些浏览器连上了」。
+- 实例 ID 由扩展生成，形如 `edge-le21fturmvhyqt5p` / `chrome-…` / `firefox-…`：前缀是浏览器类型，
+  后半段随机 + 时间戳。旧版扩展只发 `i…` 前缀，服务端照收，只是 `browser` 字段会缺失。
 
 ### `GET /task?iid=<实例ID>`
 

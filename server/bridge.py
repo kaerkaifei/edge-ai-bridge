@@ -24,9 +24,23 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOKEN_FILE = os.path.join(HERE, "token.txt")
+
+# 扩展连上来时会带一个实例 id（iid）。新版 offscreen 把浏览器名写成前缀，
+# 例如 edge-ab12cd34xyz / chrome-98fe76dc。
+# 为什么要认这个前缀：安装脚本要回答「即将同步的浏览器到底装没装插件」，
+# 只看「有没有实例在线」是不够的——可能是 Chrome 在线、而你要同步的是 Edge。
+BROWSER_PREFIXES = ("edge", "chrome", "chromium", "brave", "vivaldi", "opera")
+
+
+def instance_browser(iid: str) -> str:
+    """从 iid 前缀推断浏览器；旧版扩展只发随机 id，返回 unknown（保持兼容）。"""
+    for name in BROWSER_PREFIXES:
+        if iid.startswith(name + "-"):
+            return name
+    return "unknown"
 
 
 class State:
@@ -173,11 +187,23 @@ class Handler(BaseHTTPRequestHandler):
 
         if u.path == "/health":
             with STATE.lock:
+                now = time.time()
+                detail = [
+                    {
+                        "iid": iid,
+                        "browser": instance_browser(iid),
+                        "age_ms": int(max(0.0, now - ts) * 1000),
+                    }
+                    for iid, ts in STATE.instances.items()
+                ]
                 return self._json({
                     "ok": True,
                     "version": VERSION,
                     "active": STATE.active,
                     "instances": list(STATE.instances.keys()),
+                    # 给安装脚本用：谁在线、是哪个浏览器、最后一次心跳多久前
+                    "instances_detail": detail,
+                    "browsers": sorted({d["browser"] for d in detail}),
                     "pending": len(STATE.tasks),
                     "done": len(STATE.done),
                 })

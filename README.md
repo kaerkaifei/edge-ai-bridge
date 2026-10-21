@@ -134,6 +134,37 @@ wscript.exe launcher\silent.vbs
 powershell -ExecutionPolicy Bypass -File launcher\stop.ps1 -StopBridge
 ```
 
+### 日常浏览器没装插件？先检测，再一键装
+
+上面三步起的浏览器用的是独立的 `.profile`，**不带**你日常浏览器的登录态。
+想让 AI 直接操作你平时那个浏览器（复用已登录的 Cookie / 会话），先看它装没装插件：
+
+```powershell
+# 只读检测：退出码 0 = 已就绪，2 = 没装，1 = 环境不对
+powershell -ExecutionPolicy Bypass -File launcher\check_extension.ps1
+# 也可以直接双击：检查插件.cmd
+```
+
+检测到没装，就装：
+
+```powershell
+# Edge：真·一键（关掉 Edge → 带 --load-extension 重开 → 等心跳 → 建快捷方式）
+powershell -ExecutionPolicy Bypass -File launcher\install_extension.ps1
+# 也可以直接双击：安装插件.cmd
+```
+
+- **Microsoft Edge**：一键可行。脚本确认桥接在跑 → 备份 Edge 的 `Local State` → 礼貌关闭 Edge →
+  带 `--load-extension` + `--restore-last-session` 重开 → 轮询 `/health` 等这个浏览器的心跳 →
+  成功后在桌面建「带插件启动」快捷方式。命令行加载**不会持久化**，以后从那个快捷方式启动。
+- **Google Chrome**：品牌版从 137 起忽略 `--load-extension`（实测日志
+  `--load-extension is not allowed in Google Chrome, ignoring.`），默认 profile 下调试端口也被拒，
+  所以只能**手动装一次**：脚本把扩展目录复制到剪贴板并打开 `chrome://extensions`，
+  你点「开发者模式」→「加载已解压的扩展程序」→ 粘贴路径即可。手动装的解压扩展**会持久保存**，
+  以后正常启动浏览器插件也在，不需要快捷方式。
+- 三个脚本共用 `launcher\lib_browser.ps1`，判定逻辑只有一份，不会出现「检测说没装、安装以为装了」。
+- 日常启动器：`launcher\launch_with_extension.ps1`（快捷方式指的就是它）。浏览器已经在带插件运行时
+  它直接返回 0，不会重复重开。
+
 ### 作为库用
 
 ```python
@@ -446,6 +477,23 @@ Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
 
 ---
 
+### 坑 11：品牌版 Chrome 永远不认命令行扩展
+
+Edge 加上 `--disable-features=DisableLoadExtensionCommandLineSwitch` 就会加载 `--load-extension`，
+Chrome 不会。同一份参数，日志里明明白白写着（`extension_service.cc:423`）：
+
+```
+WARNING:chrome\browser\extensions\extension_service.cc:423] --load-extension is not allowed in Google Chrome, ignoring.
+```
+
+往 `--disable-features` 里加什么都救不回来；自动化通道只剩 CDP 的 `Extensions.loadUnpacked`，
+但它要求**非默认 profile + `--remote-debugging-port`**（Chrome 136+ 对默认 profile 直接关闭调试端口，
+实测 `/json/version` 连不上），而把用户换到另一个 profile 等于丢掉他的登录态 —— 本末倒置。
+所以：Chrome 只能「手动装一次」（装完持久保存），Edge 才能「一键重启」。
+
+顺带一个反直觉的点：**不要**在启动参数里加 `--disable-extensions-except`。它会把用户自己的
+Adblock / 密码管理器一起禁掉。专用 profile 无所谓，但在「日常那个浏览器」里等于帮他关了安全扩展。
+
 ## 心得
 
 ### 用户的浏览器不是你的浏览器
@@ -543,6 +591,10 @@ Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
   退路是用 `-NoHeadless`（窗口挪到屏幕外）。
 - **截图尺寸受 `--window-size` 限制**，不是整页长截图。需要长截图得自己滚动了分段截。
 - **单实例为主**。协议里有 `target` 字段支持多实例路由，但没做负载均衡和实例选择策略。
+- **命令行装扩展只有 Edge 可行**。Chrome 品牌版会忽略 `--load-extension`（见坑 11），只能手动装一次。
+- **检测靠「心跳」**。`check_extension` 判断的是「桥接最近 60 秒内收到过这个浏览器实例的轮询」，
+  扩展装了但浏览器没开、或桥接刚重启还没等到一次轮询，都会显示「没装」——脚本会明确打印原因，
+  不会假装成功。
 - **没有持久化**。任务队列和回执都在内存里，服务重启就没了。
 
 ---
@@ -564,8 +616,14 @@ edge-ai-bridge/
 │   ├── launch_hidden.ps1       # 主启动器：无头 + 无窗口
 │   ├── launch_setup.ps1        # 一次性可见启动，用于人工确认
 │   ├── selftest.ps1            # 端到端自检，6 个检查点
+│   ├── lib_browser.ps1         # 浏览器发现 / 心跳检测 / 启动参数（三个脚本共用）
+│   ├── check_extension.ps1     # 检测日常浏览器装没装插件（只读）
+│   ├── install_extension.ps1   # 一键装插件（Edge 自动，Chrome 手动引导 + 建快捷方式）
+│   ├── launch_with_extension.ps1  # 日常启动器：带插件启动，已在跑就直接返回
 │   ├── silent.vbs              # 零闪窗双击启动
 │   └── stop.ps1                # 精确清理
+├── 检查插件.cmd                # 双击：检测日常浏览器
+├── 安装插件.cmd                # 双击：装插件
 ├── examples/
 │   ├── client.py               # CLI + 可导入的库
 │   └── demo.py                 # 完整流程演示
