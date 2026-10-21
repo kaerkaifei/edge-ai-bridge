@@ -24,15 +24,29 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 HERE = os.path.dirname(os.path.abspath(__file__))
-TOKEN_FILE = os.path.join(HERE, "token.txt")
+
+# 运行数据（令牌、日志、浏览器 profile）放在用户级目录，不跟代码走。
+# 为什么：代码目录会被移动、重新 clone、被备份或清理牵连；令牌和 profile
+# 是「这台机器上的状态」，应当稳定，且不该出现在 git status 里。
+# 可用环境变量 BRIDGE_RUNTIME_DIR 覆盖（便携化 / 换盘时用）。
+RUNTIME_DIR = os.environ.get("BRIDGE_RUNTIME_DIR") or os.path.join(
+    os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "EdgeAiBridge"
+)
+TOKEN_FILE = os.path.join(RUNTIME_DIR, "token.txt")
+# 0.2.0 及更早版本把令牌写在 server/ 里，旧目录还在时继续读，平滑升级
+LEGACY_TOKEN_FILE = os.path.join(HERE, "token.txt")
 
 # 扩展连上来时会带一个实例 id（iid）。新版 offscreen 把浏览器名写成前缀，
 # 例如 edge-ab12cd34xyz / chrome-98fe76dc。
 # 为什么要认这个前缀：安装脚本要回答「即将同步的浏览器到底装没装插件」，
 # 只看「有没有实例在线」是不够的——可能是 Chrome 在线、而你要同步的是 Edge。
 BROWSER_PREFIXES = ("edge", "chrome", "chromium", "brave", "vivaldi", "opera")
+
+# 扩展每 1 秒拉一次任务，这就是它的「心跳」。超过这么久没动静就当作掉线：
+# /health 不再把它算成在线实例（否则安装脚本会被几分钟前的残影骗到）。
+INSTANCE_STALE_SEC = 60
 
 
 def instance_browser(iid: str) -> str:
@@ -67,11 +81,13 @@ def load_or_create_token(disable: bool) -> str:
     env = os.environ.get("BRIDGE_TOKEN", "").strip()
     if env:
         return env
-    if os.path.exists(TOKEN_FILE):
-        t = open(TOKEN_FILE, encoding="utf-8").read().strip()
-        if t:
-            return t
+    for path in (TOKEN_FILE, LEGACY_TOKEN_FILE):
+        if os.path.exists(path):
+            t = open(path, encoding="utf-8").read().strip()
+            if t:
+                return t
     t = secrets.token_urlsafe(18)
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
     with open(TOKEN_FILE, "w", encoding="utf-8") as f:
         f.write(t)
     return t
@@ -188,22 +204,30 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/health":
             with STATE.lock:
                 now = time.time()
-                detail = [
-                    {
+                # 只报「还活着」的实例：扩展每 1 秒心跳一次，超过 INSTANCE_STALE_SEC
+                # 没声音就是掉线了。以前把死实例继续当在线，导致安装脚本看见一个
+                # 几分钟前的残影就宣布「插件已连上」，然后 client 等回执等到超时。
+                fresh = []
+                stale = 0
+                for iid, ts in STATE.instances.items():
+                    age = now - ts
+                    if age > INSTANCE_STALE_SEC:
+                        stale += 1
+                        continue
+                    fresh.append({
                         "iid": iid,
                         "browser": instance_browser(iid),
-                        "age_ms": int(max(0.0, now - ts) * 1000),
-                    }
-                    for iid, ts in STATE.instances.items()
-                ]
+                        "age_ms": int(max(0.0, age) * 1000),
+                    })
                 return self._json({
                     "ok": True,
                     "version": VERSION,
                     "active": STATE.active,
-                    "instances": list(STATE.instances.keys()),
+                    "instances": [d["iid"] for d in fresh],
                     # 给安装脚本用：谁在线、是哪个浏览器、最后一次心跳多久前
-                    "instances_detail": detail,
-                    "browsers": sorted({d["browser"] for d in detail}),
+                    "instances_detail": fresh,
+                    "instances_stale": stale,
+                    "browsers": sorted({d["browser"] for d in fresh}),
                     "pending": len(STATE.tasks),
                     "done": len(STATE.done),
                 })

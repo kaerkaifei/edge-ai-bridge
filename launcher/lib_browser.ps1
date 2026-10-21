@@ -7,8 +7,10 @@
     分成两个文件很容易各写一份，然后悄悄跑偏：检测说「没装」，
     安装却以为「装了」，最后人的时间全花在互相矛盾的两句话上。
 
-    这里没有一个函数会去碰你的浏览器配置目录，检测全靠
-    「看进程命令行」+「问桥接 /health」，都是只读动作。
+    这里的大部分函数是只读的（看进程命令行、问桥接 /health）。唯一的例外是
+    Enable-DeveloperMode / Get-ExtensionDisableReason：它们要读写浏览器 profile
+    里的 Preferences —— 因为「开发者模式没开」会让命令行加载的扩展被静默禁用，
+    不碰这个配置就没法把插件装进去。改动前会留 .bak-dev-mode 备份。
 #>
 
 # ---------- 路径 ----------
@@ -17,6 +19,28 @@ function ConvertTo-NormalizedPath([string]$Path) {
     if (-not $Path) { return "" }
     return ($Path -replace '/', '\').TrimEnd('\').ToLowerInvariant()
 }
+
+<#
+    运行数据目录：令牌、日志、浏览器 profile 都放这里，刻意不放在代码目录。
+
+    为什么分开：代码目录会被移动、重新 clone、备份、清理；而令牌和 profile 是
+    「这台机器上的状态」，跟着代码走就会出现「换了目录 = 换了令牌 = 插件连不上」。
+    27 MB 的目录里 26.6 MB 其实是 profile，搬家时最容易漏掉的也是它。
+    可用环境变量 BRIDGE_RUNTIME_DIR 覆盖（便携化 / 换盘时用）。
+#>
+function Get-RuntimeDir {
+    if ($env:BRIDGE_RUNTIME_DIR) { return $env:BRIDGE_RUNTIME_DIR }
+    return (Join-Path $env:LOCALAPPDATA "EdgeAiBridge")
+}
+
+function Get-TokenFile { return (Join-Path (Get-RuntimeDir) "token.txt") }
+
+# 0.2.0 及更早版本把令牌写在 server\token.txt，旧目录还在时继续读
+function Get-LegacyTokenFile([string]$Root) { return (Join-Path $Root "server\token.txt") }
+
+function Get-BridgeLogFile { return (Join-Path (Get-RuntimeDir) "bridge.log") }
+
+function Get-DefaultProfileDir { return (Join-Path (Get-RuntimeDir) "profile") }
 
 # ---------- 浏览器本体 ----------
 
@@ -141,6 +165,141 @@ function Test-CanLoadExtensionFromCommandLine([string]$ExePath) {
     $leaf = (Split-Path -Leaf $ExePath).ToLowerInvariant()
     # 目前只有 msedge.exe 实测可用（Edge 155 允许该开关）
     return ($leaf -eq "msedge.exe")
+}
+
+# ---------- 开发者模式（命令行装扩展的前提） ----------
+<#
+    ★ 2026-10-21 实测（Edge 155.0.4283.62）：命令行 --load-extension 加载的解压扩展，
+    如果 profile 里「开发者模式」没开，浏览器会直接把它禁用，原因码：
+
+        Secure Preferences → extensions.settings.<id>.disable_reasons = 16777216
+
+    症状特别误导人：浏览器起来了、命令行里扩展路径也在、扩展目录完整，
+    但桥接永远等不到心跳；client.py 里每个命令都等到 30 秒超时。
+    对照实验（临时 profile）同样参数能装上，说明不是权限/路径问题。
+
+    修法：趁浏览器完全关闭，把 Preferences 里的 extensions.ui.developer_mode
+    写成 true，再启动 —— 实测插件立刻正常心跳。必须趁关闭时写：浏览器退出时
+    会用自己的内存快照覆盖 Preferences，运行中改了等于没改（我第一次就栽在这）。
+
+    代码里为什么用 python 改而不是 ConvertFrom-Json 往返：Preferences 是 260 KB
+    的深层嵌套 JSON，PowerShell 5.1 的 ConvertTo-Json 有 -Depth 截断和整数精度
+    问题，往返一次可能把用户的浏览器配置写坏。桥接本身也依赖 python，一致。
+#>
+function Get-BrowserUserDataDir([string]$Name) {
+    switch ($Name) {
+        "edge" { return (Join-Path $env:LOCALAPPDATA "Microsoft\Edge\User Data") }
+        "chrome" { return (Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data") }
+        default { return "" }
+    }
+}
+
+<#
+    拿「上一次用的那个 profile」。机器上可能同时有 Default / Profile 1 / Profile 2，
+    浏览器启动时不带 --profile-directory 就用最后一次的那个。要改的正是它 ——
+    改错一个目录就变成「设置了但没生效」。
+#>
+function Get-BrowserProfile([string]$Name) {
+    $userData = Get-BrowserUserDataDir $Name
+    if (-not $userData -or -not (Test-Path $userData)) { return $null }
+
+    $dirName = "Default"
+    $localState = Join-Path $userData "Local State"
+    if (Test-Path $localState) {
+        try {
+            $j = Get-Content $localState -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($j.profile.last_used) { $dirName = $j.profile.last_used }
+        } catch { }
+    }
+    $dir = Join-Path $userData $dirName
+    return [pscustomobject]@{
+        Browser     = $Name
+        UserDataDir = $userData
+        DirName     = $dirName
+        Dir         = $dir
+        Preferences = (Join-Path $dir "Preferences")
+        SecurePrefs = (Join-Path $dir "Secure Preferences")
+    }
+}
+
+function Get-DeveloperMode([string]$Name) {
+    $p = Get-BrowserProfile $Name
+    if (-not $p -or -not (Test-Path $p.Preferences)) { return $false }
+    try {
+        $j = Get-Content $p.Preferences -Raw -Encoding UTF8 | ConvertFrom-Json
+        return [bool]$j.extensions.ui.developer_mode
+    } catch { return $false }
+}
+
+<#
+    把开发者模式写成 true（幂等）。返回 already / changed / failed:<原因>。
+    要求浏览器已经关闭；调用方负责先关浏览器。
+#>
+function Enable-DeveloperMode([string]$Name) {
+    $p = Get-BrowserProfile $Name
+    if (-not $p) { return "failed:找不到 $Name 的用户配置目录" }
+    if (-not (Test-Path $p.Preferences)) { return "failed:没有 Preferences（这个浏览器还没启动过？）" }
+    if (Get-DeveloperMode $Name) { return "already" }
+
+    $py = Find-PythonExe
+    if (-not $py) { return "failed:找不到 python，没法安全改配置（也可以手动在扩展页打开开发者模式）" }
+
+    Copy-Item $p.Preferences ($p.Preferences + ".bak-dev-mode") -Force -ErrorAction SilentlyContinue
+
+    $patch = @'
+import io, json, sys
+path = sys.argv[1]
+with io.open(path, encoding='utf-8') as f:
+    data = json.load(f)
+data.setdefault('extensions', {}).setdefault('ui', {})['developer_mode'] = True
+with io.open(path, 'w', encoding='utf-8') as f:
+    json.dump(data, f, ensure_ascii=False, separators=(',', ':'))
+'@
+    $out = & $py -c $patch $p.Preferences 2>&1
+    if ($LASTEXITCODE -ne 0) { return "failed:$out" }
+
+    if (Get-DeveloperMode $Name) { return "changed" }
+    return "failed:写入后读回来还是 false"
+}
+
+<#
+    扩展被浏览器禁用的原因码（0 = 没被禁用）。16777216 =
+    DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION —— 开发者模式没开。
+    靠 Secure Preferences 里「path 等于我们扩展目录」的那条记录判断，
+    换过目录的旧记录不会混淆（同一个扩展在不同路径下是不同 id）。
+#>
+function Get-ExtensionDisableReason([string]$Name, [string]$ExtensionPath) {
+    $p = Get-BrowserProfile $Name
+    if (-not $p -or -not (Test-Path $p.SecurePrefs)) { return 0 }
+    $want = ConvertTo-NormalizedPath $ExtensionPath
+    if (-not $want) { return 0 }
+    try {
+        $j = Get-Content $p.SecurePrefs -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($prop in $j.extensions.settings.PSObject.Properties) {
+            $v = $prop.Value
+            if (-not $v.path) { continue }
+            if ((ConvertTo-NormalizedPath $v.path) -ne $want) { continue }
+            if ($v.disable_reasons) { return [int]$v.disable_reasons }
+            return 0
+        }
+    } catch { }
+    return 0
+}
+
+<#
+    /health 里哪些浏览器是真在线的：只看 age_ms 足够小的实例。
+    桥接自己已经过滤掉 60 秒没心跳的，这里再收一道 15 秒的 —— 安装脚本
+    被残影骗一次，代价是一个人盯着 30 秒超时想不出为什么。
+#>
+function Get-FreshBrowsers($Health, [int]$MaxAgeMs = 15000) {
+    if (-not $Health) { return @() }
+    $out = @()
+    foreach ($d in @($Health.instances_detail)) {
+        if (-not $d) { continue }
+        if ($null -eq $d.age_ms) { $out += $d.browser; continue }
+        if ([int]$d.age_ms -lt $MaxAgeMs) { $out += $d.browser }
+    }
+    return @($out | Sort-Object -Unique)
 }
 
 <#
@@ -279,8 +438,12 @@ function Find-FreePort([int]$Start, [int]$Count = 20) {
 function Get-BridgeToken([string]$Root, [string]$Token) {
     if ($Token) { return $Token }
     if ($env:BRIDGE_TOKEN) { return $env:BRIDGE_TOKEN }
-    $tf = Join-Path $Root "server\token.txt"
-    if (Test-Path $tf) { return ((Get-Content $tf -Raw) -replace '\s', '') }
+    foreach ($tf in @((Get-TokenFile), (Get-LegacyTokenFile $Root))) {
+        if (Test-Path $tf) {
+            $t = ((Get-Content $tf -Raw) -replace '\s', '')
+            if ($t) { return $t }
+        }
+    }
     return ""
 }
 
@@ -375,7 +538,9 @@ function Start-BridgeService([int]$Port, [string]$Token, [string]$ServerDir) {
     $pyw = Join-Path (Split-Path -Parent $py) "pythonw.exe"
     if (-not (Test-Path $pyw)) { $pyw = $py }
 
-    $logFile = Join-Path $ServerDir "bridge.log"
+    $runtime = Get-RuntimeDir
+    if (-not (Test-Path $runtime)) { New-Item -ItemType Directory -Path $runtime -Force | Out-Null }
+    $logFile = Join-Path $runtime "bridge.log"
     $argList = @((Join-Path $ServerDir "bridge.py"), "--port", "$Port", "--log", $logFile)
     if ($Token) { $argList += @("--token", $Token) }
     $quoted = ($argList | ForEach-Object {
@@ -397,7 +562,7 @@ function Start-BridgeService([int]$Port, [string]$Token, [string]$ServerDir) {
 # ---------- 安装状态 ----------
 
 function Get-InstallStatePath {
-    $dir = Join-Path $env:LOCALAPPDATA "EdgeAiBridge"
+    $dir = Get-RuntimeDir
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     return (Join-Path $dir "install-state.json")
 }

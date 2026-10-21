@@ -1,7 +1,7 @@
-{
+﻿{
   "manifest_version": 3,
   "name": "Edge AI Bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "让本地 AI 接管 Edge / Chrome：标签页管理、页面脚本执行、内容抓取、截图。支持一键把插件装进你日常的浏览器。",
   "minimum_chrome_version": "116",
   "permissions": [

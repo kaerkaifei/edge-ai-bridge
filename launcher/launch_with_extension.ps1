@@ -105,11 +105,10 @@ $null = Set-ExtensionConfig -ExtensionPath $ExtensionPath -Port $Port -Token $to
 $loaded = Test-ExtensionLoaded -ExtensionPath $ExtensionPath -Processes @($target.Processes)
 $health = Get-BridgeHealth -Port $Port -Token $token
 $connected = $false
-if ($health) { $connected = (@($health.browsers) -contains $target.Name) }
-
-if ($connected -and -not $target.Running) {
-    # /health 里的实例有 30 秒左右的「还活着」窗口，进程已经没了但记录还在
-    $connected = $false
+if ($health) {
+    # 只认「最近 15 秒内还有心跳」的实例。只看 browsers 会被 60 秒内的残影骗到，
+    # 结果是一次启动连带 30 秒的 client 超时，非常费解。
+    $connected = (@(Get-FreshBrowsers $health 15000) -contains $target.Name)
 }
 
 if ($connected) {
@@ -168,6 +167,17 @@ if ($target.Running -and -not $loaded) {
     Ok "已关闭"
 }
 
+# ---------- 开发者模式：命令行加载解压扩展的前提 ----------
+# 不开的后果不是报错，而是扩展被静默禁用（disable_reasons=16777216），
+# 表现成「浏览器起来了、扩展目录也在、桥接就是收不到心跳」。
+# 必须趁浏览器完全关闭时写，否则浏览器退出时会用自己的内存快照覆盖掉。
+$devMode = Enable-DeveloperMode $target.Name
+switch -Wildcard ($devMode) {
+    "already" { }
+    "changed" { Ok "已为 $($target.DisplayName) 打开「开发者模式」（命令行加载解压扩展的前提）" }
+    default { Warn "开发者模式没设成：$devMode" }
+}
+
 # ---------- 启动 ----------
 $launchArgs = Get-ExtensionLaunchArgs -ExtensionPath $ExtensionPath -RestoreSession:(-not $NoRestoreSession)
 if ($Url) { $launchArgs += $Url }
@@ -186,13 +196,18 @@ $ok = $false
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500
     $h = Get-BridgeHealth -Port $Port -Token $token
-    if ($h -and (@($h.browsers) -contains $target.Name)) { $ok = $true; break }
+    if ($h -and (@(Get-FreshBrowsers $h 15000) -contains $target.Name)) { $ok = $true; break }
 }
 
 if (-not $ok) {
     Write-Host "等了 25 秒，桥接里还是没看到 $($target.DisplayName) 的心跳。" -ForegroundColor Red
+    $reason = Get-ExtensionDisableReason $target.Name $ExtensionPath
+    if ($reason -ne 0) {
+        Write-Host "  插件被浏览器禁用了（disable_reasons=$reason）——通常是「开发者模式」没开。" -ForegroundColor Yellow
+        Write-Host "  手动开一次：edge://extensions → 左下角「开发人员模式」→ 勾上，然后重跑本脚本。"
+    }
     Write-Host "  排查：powershell -ExecutionPolicy Bypass -File launcher\check_extension.ps1"
-    Write-Host "  日志：$(Join-Path $ServerDir 'bridge.log')"
+    Write-Host "  日志：$(Get-BridgeLogFile)"
     exit 1
 }
 

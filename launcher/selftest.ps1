@@ -21,14 +21,17 @@
 [CmdletBinding()]
 param(
     [int]$Port = 8811,
-    [string]$ProfileName = ".profile-selftest"
+    [string]$ProfileName = "profile-selftest"
 )
 
 $ErrorActionPreference = "Continue"
 
 $Root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot "lib_browser.ps1")
+# 自检用的 profile 也放运行数据目录，不留在仓库里（0.2.1 起）
+$RuntimeDir = Get-RuntimeDir
 $Ext = Join-Path $Root "extension"
-$Profile = Join-Path $Root $ProfileName
+$Profile = Join-Path $RuntimeDir $ProfileName
 $ServerDir = Join-Path $Root "server"
 $Client = Join-Path $Root "examples\client.py"
 $Token = "selftest-" + [Guid]::NewGuid().ToString("N").Substring(0, 12)
@@ -39,8 +42,9 @@ function Ok($m) { Write-Host "  [OK] $m" -ForegroundColor Green }
 function Bad($m) { Write-Host "  [FAIL] $m" -ForegroundColor Red }
 
 # ---------- 找 python / Edge ----------
-$py = (Get-Command python -ErrorAction SilentlyContinue).Source
-if (-not $py) { throw "找不到 python" }
+# 不再要求 python 在 PATH 里：PATH 里没有时退回到常见安装位置（含 uv 管理的那份）
+$py = Find-PythonExe
+if (-not $py) { throw "找不到 python（需要 >= 3.8）。装一个，或把它的目录加进 PATH 后重试。" }
 $pyw = Join-Path (Split-Path -Parent $py) "pythonw.exe"
 if (-not (Test-Path $pyw)) { $pyw = $py }
 

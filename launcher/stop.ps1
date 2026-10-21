@@ -23,7 +23,9 @@ param(
 $ErrorActionPreference = "Continue"
 
 $Root = Split-Path -Parent $PSScriptRoot
-if (-not $ProfileDir) { $ProfileDir = Join-Path $Root ".profile" }
+# 与 launch_hidden.ps1 保持同一套默认值：profile 在运行数据目录，不在仓库里
+$RuntimeDir = if ($env:BRIDGE_RUNTIME_DIR) { $env:BRIDGE_RUNTIME_DIR } else { Join-Path $env:LOCALAPPDATA "EdgeAiBridge" }
+if (-not $ProfileDir) { $ProfileDir = Join-Path $RuntimeDir "profile" }
 
 $profileFull = [System.IO.Path]::GetFullPath($ProfileDir)
 

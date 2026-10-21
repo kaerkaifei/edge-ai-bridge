@@ -136,7 +136,7 @@ powershell -ExecutionPolicy Bypass -File launcher\stop.ps1 -StopBridge
 
 ### 日常浏览器没装插件？先检测，再一键装
 
-上面三步起的浏览器用的是独立的 `.profile`，**不带**你日常浏览器的登录态。
+上面三步起的浏览器用的是独立 profile（0.2.1 起默认在 `%LOCALAPPDATA%\EdgeAiBridge\profile`，不在仓库里），**不带**你日常浏览器的登录态。
 想让 AI 直接操作你平时那个浏览器（复用已登录的 Cookie / 会话），先看它装没装插件：
 
 ```powershell
@@ -170,7 +170,7 @@ powershell -ExecutionPolicy Bypass -File launcher\install_extension.ps1
 ```python
 from examples.client import Edge
 
-e = Edge()                       # 自动读 server/token.txt
+e = Edge()                       # 自动读运行数据目录的 token.txt
 tab = e.open("https://example.com")
 print(e.eval("document.title", tab_id=tab["tabId"])["value"])
 e.screenshot("shot.png", tab_id=tab["tabId"])
@@ -494,6 +494,27 @@ WARNING:chrome\browser\extensions\extension_service.cc:423] --load-extension is 
 顺带一个反直觉的点：**不要**在启动参数里加 `--disable-extensions-except`。它会把用户自己的
 Adblock / 密码管理器一起禁掉。专用 profile 无所谓，但在「日常那个浏览器」里等于帮他关了安全扩展。
 
+### 坑 12：Edge 命令行装扩展，还要求「开发者模式」开着（最难查的一个）
+
+坑 3 解决了「不加载」，坑 12 是它的兄弟：参数都对了，扩展**加载了但被禁用**，同样不报错。
+2026-10-21 在 Edge 155 实测：日常 profile 里「开发者模式」没开时，`--load-extension` 的解压扩展
+会被写入 `Secure Preferences → extensions.settings.<id>.disable_reasons = 16777216`
+（`DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION`），offscreen 一次心跳都不发。
+症状和坑 2 几乎一样 ——「浏览器起来了、扩展目录也在、桥接就是没实例」，
+然后 `client.py` 每个命令等 30 秒超时。
+
+两个必须知道的细节：
+
+1. **改配置要趁浏览器完全关闭**。浏览器退出时会用自己的内存快照重写 `Preferences`，
+   运行中改 `extensions.ui.developer_mode` = 白改（我第一发就是这么废的）。
+2. **用真 JSON 库改，别用 ConvertFrom-Json 往返**。`Preferences` 是几百 KB 的深层嵌套，
+   PowerShell 5.1 的 `ConvertTo-Json` 有深度截断和精度问题，往返一次可能把用户配置写坏。
+   `install_extension.ps1` 借 python（桥接本来就依赖它）原地改这一个键，并留
+   `Preferences.bak-dev-mode` 备份。
+
+`launcher/check_extension.ps1` 现在会直接读 `disable_reasons`，被禁用就点名原因，
+不再让人对着「没心跳」三个常见原因瞎猜。
+
 ## 心得
 
 ### 用户的浏览器不是你的浏览器
@@ -572,9 +593,9 @@ Adblock / 密码管理器一起禁掉。专用 profile 无所谓，但在「日�
 | 项 | 做法 |
 | --- | --- |
 | 监听地址 | 固定 `127.0.0.1`，外网访问不到 |
-| 鉴权 | 随机令牌，存在 `server/token.txt`（已 gitignore） |
+| 鉴权 | 随机令牌，存在 `%LOCALAPPDATA%\EdgeAiBridge\token.txt`（不在仓库里） |
 | 令牌传递 | 自定义 header，跨域需 preflight |
-| 浏览器 profile | 独立目录，与你的日常 Edge 完全隔离 |
+| 浏览器 profile | 独立目录（默认 `%LOCALAPPDATA%\EdgeAiBridge\profile`），与你的日常 Edge 完全隔离 |
 | 进程清理 | 按 `user-data-dir` 精确匹配，绝不误伤 |
 
 **能力边界**：这个项目让 AI 拥有和「你本人坐在电脑前」同等的网页操作能力。
@@ -630,6 +651,20 @@ edge-ai-bridge/
 └── docs/
     └── PROTOCOL.md             # 通信协议
 ```
+
+运行数据（0.2.1 起不在仓库里）：
+
+```
+%LOCALAPPDATA%\EdgeAiBridge\
+├── token.txt              # 桥接令牌
+├── bridge.log             # 桥接日志
+├── install-state.json     # 上次检测 / 安装的结果
+└── profile\               # 无头浏览器 profile（搬家前它在仓库里叫 .profile）
+```
+
+为什么分开：代码目录会被移动、重新 clone、被备份或清理；而令牌和 profile 是
+「这台机器上的状态」。跟着代码走就会出现「换了目录 = 换了令牌 = 插件悄悄连不上」。
+要用别的目录，设环境变量 `BRIDGE_RUNTIME_DIR` 即可。
 
 ---
 

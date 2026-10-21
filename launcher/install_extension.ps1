@@ -8,10 +8,18 @@
     Microsoft Edge —— 可以真的「一键」：
       1. 确认桥接服务在跑，把端口 + 令牌写进 extension\config.json
       2. 检查目标浏览器是不是已经带着插件在跑了 —— 是的话就直接结束
-      3. 没装：先礼貌地关掉浏览器（让它自己保存会话），再带 --load-extension 启动，
-         加上 --restore-last-session，标签页会原样回来
+      3. 没装：先礼貌地关掉浏览器（让它自己保存会话），把 profile 的「开发者模式」
+         打开，再带 --load-extension 启动，加上 --restore-last-session，
+         标签页会原样回来
       4. 轮询 /health，确认「这个浏览器」的心跳真的出现在桥接里
       5. 记下安装状态，并在桌面建一个「带插件启动」的快捷方式
+
+    ★ 「开发者模式」是 2026-10-21 实测出来的硬前提（Edge 155）：模式没开时，
+    浏览器会把命令行加载的解压扩展直接禁用（disable_reasons=16777216），
+    症状是「浏览器起来了、扩展目录也在、桥接永远等不到心跳」。脚本会在浏览器
+    完全关闭的状态下把 Preferences 的 extensions.ui.developer_mode 写成 true
+    （原文件备份成 Preferences.bak-dev-mode）。必须趁关闭时写 —— 浏览器退出时
+    会用自己的内存快照覆盖 Preferences，运行中改了等于没改。
 
     Google Chrome —— 只能「半自动」，且只需手动一次：
       品牌版 Chrome 从 137 起直接忽略 --load-extension（实测日志：
@@ -35,7 +43,7 @@
     如果那个端口被别的服务占着且令牌对不上，自动换一个空闲端口。
 
 .PARAMETER Token
-    桥接令牌。空 = 读 server\token.txt 或环境变量 BRIDGE_TOKEN。
+    桥接令牌。空 = 读运行数据目录的 token.txt（旧版在 server\token.txt）或环境变量 BRIDGE_TOKEN。
 
 .PARAMETER ExePath
     强制指定浏览器 exe（企业版 / 绿色版 / 非标准安装位置）。
@@ -133,14 +141,14 @@ if (Test-PortOpen $Port 250) {
     } else {
         try {
             if (-not (Start-BridgeService -Port $Port -Token $token -ServerDir $ServerDir)) {
-                Bad "桥接服务没起来，看日志：$(Join-Path $ServerDir 'bridge.log')"
+                Bad "桥接服务没起来，看日志：$(Get-BridgeLogFile)"
                 exit 1
             }
         } catch {
             Bad $_.Exception.Message
             exit 1
         }
-        Ok "已后台启动（日志 server\bridge.log）"
+        Ok "已后台启动（日志 $(Get-BridgeLogFile)）"
     }
 }
 
@@ -161,9 +169,7 @@ if ($DryRun) {
 # ---------- 5. 现在到底装没装 ----------
 $loaded = Test-ExtensionLoaded -ExtensionPath $ExtensionPath -Processes $target.Processes
 $health = Get-BridgeHealth -Port $Port -Token $token
-$browsersNow = @()
-if ($health -and $health.browsers) { $browsersNow = @($health.browsers | Where-Object { $_ }) }
-$connected = ($browsersNow -contains $target.Name)
+$connected = (@(Get-FreshBrowsers $health 15000) -contains $target.Name)
 
 if ($loaded -and $connected) {
     Ok "$($target.DisplayName) 已经带着插件在跑，桥接也能看到心跳。"
@@ -273,7 +279,18 @@ if ($target.Running) {
     Ok "浏览器已关闭"
 }
 
-# ---------- 8. 带插件重新启动 ----------
+# ---------- 8. 开发者模式 + 带插件重新启动 ----------
+# 命令行加载的解压扩展要求 profile 里「开发者模式」开着，否则浏览器会把它
+# 静默禁用（disable_reasons=16777216），然后表现成「装了但没心跳」。
+# 这一步必须趁浏览器完全关闭时做（第 7 步刚关完）。
+Step "确认 $($target.DisplayName) 的「开发者模式」已打开（命令行加载扩展的前提）"
+$devMode = Enable-DeveloperMode $target.Name
+switch -Wildcard ($devMode) {
+    "already" { Ok "本来就开着" }
+    "changed" { Ok "已打开（原配置备份为 Preferences.bak-dev-mode）" }
+    default { Warn "$devMode —— 若下面等不到心跳，请手动在扩展页打开「开发人员模式」" }
+}
+
 # 注意：这里刻意不传 --user-data-dir —— 复用默认 profile，登录态才会跟着走。
 # 也不传 --disable-extensions-except：那会把用户自己的其它扩展全禁用。
 $launchArgs = Get-ExtensionLaunchArgs -ExtensionPath $ExtensionPath -RestoreSession
@@ -293,17 +310,20 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 500
     $h = Get-BridgeHealth -Port $Port -Token $token
     if (-not $h) { continue }
-    $bs = @($h.browsers | Where-Object { $_ })
-    if ($bs -contains $target.Name) { $ok = $true; break }
+    if (@(Get-FreshBrowsers $h 15000) -contains $target.Name) { $ok = $true; break }
 }
 
 if (-not $ok) {
     Bad "等了 25 秒，桥接里还是没有 $($target.DisplayName) 的心跳。"
+    $reason = Get-ExtensionDisableReason $target.Name $ExtensionPath
+    if ($reason -ne 0) {
+        Write-Host "  插件被浏览器禁用了（disable_reasons=$reason）——最常见原因是「开发人员模式」没开。" -ForegroundColor Yellow
+    }
     Write-Host ""
     Write-Host " 排查顺序：" -ForegroundColor Yellow
     Write-Host "   1) 在浏览器地址栏打开 $($target.Name)://extensions ，看「Edge AI Bridge」在不在、有没有被禁用"
     Write-Host "      （不在的话：打开「开发人员模式」→「加载解压缩的扩展」→ 选 $ExtensionPath）"
-    Write-Host "   2) 看桥接日志：$(Join-Path $ServerDir 'bridge.log')"
+    Write-Host "   2) 看桥接日志：$(Get-BridgeLogFile)"
     Write-Host "   3) 确认 extension\config.json 里是 port=$Port"
     Write-Host "   4) 浏览器版本需要 >= 137；老版本 --load-extension 不支持"
     Write-Host "   5) 再跑一次检查：powershell -ExecutionPolicy Bypass -File launcher\check_extension.ps1"

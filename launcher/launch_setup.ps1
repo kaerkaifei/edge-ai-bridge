@@ -23,11 +23,13 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
+# 运行数据（令牌 / profile）在用户级目录，不在仓库里 —— 与 launch_hidden.ps1 一致
+$RuntimeDir = if ($env:BRIDGE_RUNTIME_DIR) { $env:BRIDGE_RUNTIME_DIR } else { Join-Path $env:LOCALAPPDATA "EdgeAiBridge" }
 if (-not $ExtensionPath) { $ExtensionPath = Join-Path $Root "extension" }
-if (-not $ProfileDir)    { $ProfileDir    = Join-Path $Root ".profile" }
+if (-not $ProfileDir)    { $ProfileDir    = Join-Path $RuntimeDir "profile" }
 
 $ServerDir = Join-Path $Root "server"
-$TokenFile = Join-Path $ServerDir "token.txt"
+$TokenFile = if (Test-Path (Join-Path $RuntimeDir "token.txt")) { Join-Path $RuntimeDir "token.txt" } else { Join-Path $ServerDir "token.txt" }
 $ConfigFile = Join-Path $ExtensionPath "config.json"
 
 function Write-Step($msg) { Write-Host "[setup] $msg" -ForegroundColor Cyan }

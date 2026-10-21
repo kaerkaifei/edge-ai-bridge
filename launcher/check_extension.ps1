@@ -27,7 +27,7 @@
     桥接端口。0 = 先读 extension/config.json，再退回 8800。
 
 .PARAMETER Token
-    桥接令牌。空 = 读 server/token.txt 或环境变量 BRIDGE_TOKEN。
+    桥接令牌。空 = 读运行数据目录的 token.txt（旧版在 server\token.txt）或环境变量 BRIDGE_TOKEN。
 
 .PARAMETER ExePath
     强制指定浏览器 exe（企业版 / 绿色版 / 非标准安装位置）。
@@ -126,8 +126,10 @@ if ($portOpen) { $health = Get-BridgeHealth -Port $Port -Token $Token }
 $onlineBrowsers = @()
 $instances = @()
 if ($health) {
-    $onlineBrowsers = @($health.browsers | Where-Object { $_ })
-    $instances = @($health.instances_detail)
+    # 自己按 age_ms 过滤，不直接信 /health 顶层的 browsers —— 万一连的是没升级的
+    # 旧桥接，那里面会混着几小时前的残影（0.2.1 的教训：残影会让安装脚本假成功）。
+    $onlineBrowsers = @(Get-FreshBrowsers $health 60000)
+    $instances = @($health.instances_detail | Where-Object { $null -eq $_.age_ms -or [int]$_.age_ms -lt 60000 })
 }
 $connected = ($onlineBrowsers -contains $target.Name)
 $anyInstance = ($instances.Count -gt 0)
@@ -162,17 +164,27 @@ if ($loaded -and $connected) {
     } elseif (-not $health) {
         $state = "auth-failed"; $code = 1
         [void]$hints.Add("端口 $Port 在监听，但用当前令牌换不到 /health —— 可能是别的服务占着这个端口，或令牌不对。")
-        [void]$hints.Add("确认 server\token.txt 和扩展里的 config.json 是同一份；端口冲突时用 -Port 换一个。")
+        [void]$hints.Add("确认 token.txt 和扩展里的 config.json 是同一份；端口冲突时用 -Port 换一个。")
     } elseif ($anyInstance -and -not $connected) {
         $state = "other-browser-online"; $code = 1
         [void]$hints.Add("桥接在线的是：$($onlineBrowsers -join ', ')；$($target.DisplayName) 本身没连上。")
         [void]$hints.Add("插件可能只装在另一个浏览器里（或者装在另一个 profile 里）。")
     } else {
         $state = "no-heartbeat"; $code = 1
-        [void]$hints.Add("插件已加载，但一次心跳都没发出来。常见原因：")
-        [void]$hints.Add("  · extension\config.json 里的端口/令牌和桥接服务对不上")
-        [void]$hints.Add("  · 扩展在 edge://extensions 里被禁用或报错")
-        [void]$hints.Add("  · 无头模式下扩展没起来（老版本浏览器不支持）")
+        # 「命令行带了 --load-extension」和「扩展真的生效」是两回事：
+        # 0.2.1 实测，profile 里开发者模式没开时浏览器会把解压扩展静默禁用，
+        # 命令行里参数还在，心跳就是不会有。先看一眼禁用原因。
+        $reason = Get-ExtensionDisableReason $target.Name $ExtensionPath
+        if ($reason -ne 0) {
+            [void]$hints.Add("扩展被浏览器禁用了（disable_reasons=$reason）。")
+            [void]$hints.Add("  最常见原因：$($target.Name)://extensions 里的「开发人员模式」没开。")
+            [void]$hints.Add("  修复：powershell -ExecutionPolicy Bypass -File launcher\install_extension.ps1 -Browser $($target.Name)")
+        } else {
+            [void]$hints.Add("插件已加载，但一次心跳都没发出来。常见原因：")
+            [void]$hints.Add("  · extension\config.json 里的端口/令牌和桥接服务对不上")
+            [void]$hints.Add("  · 扩展在 $($target.Name)://extensions 里被禁用或报错")
+            [void]$hints.Add("  · 无头模式下扩展没起来（老版本浏览器不支持）")
+        }
     }
 } elseif (-not $loaded -and $connected) {
     # 心跳在，说明它确实加载了；只是进程命令行看不出来（开机自启、启动器包装等情况）

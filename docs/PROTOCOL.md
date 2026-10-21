@@ -1,4 +1,4 @@
-# 通信协议
+﻿# 通信协议
 
 桥接服务和扩展之间只有 4 个 HTTP 接口。全部走 `127.0.0.1`，请求头带 `X-Bridge-Token`。
 
@@ -7,7 +7,7 @@
 除 `OPTIONS` 外，所有请求都要带：
 
 ```
-X-Bridge-Token: <server/token.txt 里的令牌>
+X-Bridge-Token: <运行数据目录 token.txt 里的令牌，旧版在 server/token.txt>
 ```
 
 服务端用 `--no-token` 启动时跳过校验（仅限本机调试）。
@@ -43,7 +43,7 @@ AI 侧等超时就知道出问题了，不会静默丢任务。
 ```json
 {
   "ok": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "active": "iXXX",
   "instances": ["iXXX"],
   "instances_detail": { "iXXX": { "last_seen": 1792367578.5, "browser": "edge" } },

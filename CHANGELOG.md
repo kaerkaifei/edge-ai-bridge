@@ -1,5 +1,32 @@
-# 更新日志
+﻿# 更新日志
 
+## 0.2.1 — 2026-10-21
+
+### 变更：运行数据与代码分离
+
+- 令牌、日志、浏览器 profile、install-state.json 统一放到 %LOCALAPPDATA%\EdgeAiBridge\，
+  仓库里不再有 .profile（此前它占整个目录 27 MB 里的 26.6 MB）。
+  可用环境变量 `BRIDGE_RUNTIME_DIR` 覆盖，便于便携化或换盘。
+- server/bridge.py：令牌优先读运行数据目录，回退读旧的 server/token.txt，升级不会掉令牌。
+- launcher/*.ps1：新增 Get-RuntimeDir / Get-TokenFile / Get-BridgeLogFile / Get-DefaultProfileDir，
+  launch_hidden / launch_setup / stop / selftest 的默认 profile 与日志路径改为运行数据目录。
+- selftest.ps1：不再要求 python 在 PATH 里，改用 Find-PythonExe（含 uv 管理的解释器）。
+
+### 修复：两个「假成功」
+
+- `/health` 现在只报最近 60 秒内有心跳的实例（`instances_stale` 给出被过滤掉的数量）。
+  以前浏览器关掉后，残影会继续挂在 `browsers` 里最长 60 秒 —— 安装脚本据此宣布
+  「插件已连上桥接」，紧接着每条 `client.py` 命令等 30 秒超时。
+- 安装 / 启动流程补上「开发者模式」这一步（Edge 155 实测硬前提，见 README 坑 12）：
+  浏览器完全关闭后把 `Preferences` 的 `extensions.ui.developer_mode` 写成 `true`
+  （借 python 原地改，留 `Preferences.bak-dev-mode` 备份；PowerShell 的 JSON 往返不敢碰
+  几百 KB 的用户配置）。等待循环同时改看 15 秒内的新心跳，不再被残影骗。
+- `check_extension.ps1` 会读 `Secure Preferences` 里的 `disable_reasons`，
+  扩展被禁用时直接点名原因，不再只列三个常见猜测。
+### 为什么要动这个
+
+代码目录会被移动、重新 clone、被备份或清理；令牌和浏览器 profile 是「这台机器上的状态」。
+两者绑在一起，就会出现「换了目录 = 换了令牌 = 插件安静地连不上」这种最难查的问题。
 ## 0.2.0 — 2026-10-21
 
 ### 新增：安装期检测 + 一键安装

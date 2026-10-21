@@ -25,13 +25,13 @@
     正常显示窗口，用于调试 / 首次人工确认扩展是否加载成功。
 
 .PARAMETER Token
-    手动指定令牌；不传则自动从 server/token.txt 读取。
+    手动指定令牌；不传则自动从运行数据目录的 token.txt 读取（旧版在 server\token.txt）。
 
 .PARAMETER ExtensionPath
     扩展目录，默认仓库下的 extension/。
 
 .PARAMETER ProfileDir
-    浏览器用户数据目录，默认仓库下的 .profile/。
+    浏览器用户数据目录，默认 %LOCALAPPDATA%\EdgeAiBridge\profile（可用 BRIDGE_RUNTIME_DIR 改）。
     必须独立，否则会和你日常用的 Edge 抢锁、并且可能污染你的真实配置。
 
 .EXAMPLE
@@ -62,10 +62,15 @@ $ErrorActionPreference = "Stop"
 # ---------- 路径解析 ----------
 
 $Root = Split-Path -Parent $PSScriptRoot          # 仓库根目录
+# 运行数据（令牌 / 日志 / profile）默认放用户级目录，不跟代码走：
+# 代码目录随时可能被移动或重新 clone，而令牌和浏览器 profile 是本机状态，
+# 跟着代码走就会出现「换了目录 = 换了令牌 = 插件连不上」。
+$RuntimeDir = if ($env:BRIDGE_RUNTIME_DIR) { $env:BRIDGE_RUNTIME_DIR } else { Join-Path $env:LOCALAPPDATA "EdgeAiBridge" }
+$LegacyTokenFile = Join-Path $Root "server\token.txt"
 if (-not $ExtensionPath) { $ExtensionPath = Join-Path $Root "extension" }
-if (-not $ProfileDir)    { $ProfileDir    = Join-Path $Root ".profile" }
+if (-not $ProfileDir)    { $ProfileDir    = Join-Path $RuntimeDir "profile" }
 $ServerDir = Join-Path $Root "server"
-$TokenFile = Join-Path $ServerDir "token.txt"
+$TokenFile = if (Test-Path (Join-Path $RuntimeDir "token.txt")) { Join-Path $RuntimeDir "token.txt" } else { $LegacyTokenFile }
 $ConfigFile = Join-Path $ExtensionPath "config.json"
 $PidFile = Join-Path $ProfileDir "bridge-edge.pid"
 
@@ -146,7 +151,8 @@ if (-not $SkipBridge) {
     } else {
         $python = Find-Python
         $pythonw = Get-PythonW $python
-        $logOut = Join-Path $ServerDir "bridge.log"
+        $logOut = Join-Path $RuntimeDir "bridge.log"
+        if (-not (Test-Path $RuntimeDir)) { New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null }
         Write-Step "桥接服务未启动，后台拉起（无窗口）..."
 
         # 注意：这里刻意不用 -RedirectStandardOutput。
@@ -185,7 +191,7 @@ if (-not $Token) {
     }
 }
 if (-not $Token) {
-    Write-Warn2 "没有令牌（server/token.txt 为空）。如果你的 bridge 用了 --no-token，这是正常的。"
+    Write-Warn2 "没有令牌（$TokenFile 为空）。如果你的 bridge 用了 --no-token，这是正常的。"
 }
 
 # ---------- 3. 写 config.json，让扩展一启动就拿到配置 ----------
