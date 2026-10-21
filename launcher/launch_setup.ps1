@@ -55,7 +55,7 @@ if (Test-Path $TokenFile) { $token = (Get-Content $TokenFile -Raw).Trim() }
 
 # 写配置
 $cfg = [ordered]@{ port = $Port; token = $token }
-$cfg | ConvertTo-Json -Compress | Set-Content -Path $ConfigFile -Encoding UTF8 -NoNewline
+[System.IO.File]::WriteAllText($ConfigFile, ($cfg | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding(`$false)))
 Write-Step "扩展配置已写入：$ConfigFile"
 
 # 建 profile

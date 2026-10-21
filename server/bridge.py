@@ -24,7 +24,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # 运行数据（令牌、日志、浏览器 profile）放在用户级目录，不跟代码走。

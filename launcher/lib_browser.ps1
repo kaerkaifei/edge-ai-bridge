@@ -456,7 +456,10 @@ function Get-ExtensionConfig([string]$ExtensionPath) {
 function Set-ExtensionConfig([string]$ExtensionPath, [int]$Port, [string]$Token) {
     $cfgFile = Join-Path $ExtensionPath "config.json"
     $obj = [ordered]@{ port = $Port; token = $Token }
-    $obj | ConvertTo-Json -Compress | Set-Content -Path $cfgFile -Encoding UTF8 -NoNewline
+    # 不带 BOM 的 UTF-8：PS 5.1 的 -Encoding UTF8 会写 BOM，
+    # Python json.load 用 utf-8 读带 BOM 的文件直接抛异常 ——
+    # 客户端就会悄悄回落到 8800 端口，表现成「桥接明明活着，工具说连不上」。
+    [System.IO.File]::WriteAllText($cfgFile, ($obj | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
     return $cfgFile
 }
 
@@ -569,7 +572,7 @@ function Get-InstallStatePath {
 
 function Save-InstallState($State) {
     $path = Get-InstallStatePath
-    ($State | ConvertTo-Json -Depth 5) | Set-Content -Path $path -Encoding UTF8
+    [System.IO.File]::WriteAllText($path, (($State | ConvertTo-Json -Depth 5)), (New-Object System.Text.UTF8Encoding($false)))
     return $path
 }
 

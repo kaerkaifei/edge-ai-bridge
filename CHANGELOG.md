@@ -1,4 +1,25 @@
-﻿# 更新日志
+# 更新日志
+
+## 0.2.2 — 2026-10-21
+
+### 新增：MCP 服务器，Codex / Claude 可直接调用
+
+- `mcp/edge_bridge_mcp.py`：零依赖 stdio MCP 服务器，把桥接包成 13 个 `browser_*` 工具
+  （status / tabs / open / close_tab / goto / text / html / eval / wait / click / type /
+  screenshot / cookie）。浏览器操作全部转发 `examples/client.py` 的 `Edge` 类，
+  push/ack 协议只有一份实现。
+- Codex 注册：config.toml 加 `[mcp_servers.edge-bridge]`，`codex mcp list` 确认 enabled。
+- 工具描述里写明「先 `browser_status` 自检」「强 CSP 站点 eval 会被拒，改 text/html」，
+  让模型自己就能踩到正确的路。
+
+### 修复：config.json 的 BOM 让客户端悄悄连错端口
+
+- PowerShell 5.1 的 `Set-Content -Encoding UTF8` 写出的文件带 BOM，Python `json.load`
+  用 utf-8 读直接抛，端口回落到 8800 —— 桥接在 8801 时表现为「明明活着，客户端说连不上」。
+- 写入端统一改无 BOM 的 `[System.IO.File]::WriteAllText`（含 `launch_hidden.ps1` 写浏览器
+  `Preferences` 那处）；读取端统一 `utf-8-sig`，旧文件无需迁移。README 坑 13。
+- `client.py` 的令牌/端口读取同步改：令牌优先读运行数据目录（0.2.1 搬家后它一直没跟上，
+  还指着旧 server/token.txt），端口支持 `BRIDGE_PORT` 环境变量。
 
 ## 0.2.1 — 2026-10-21
 

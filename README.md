@@ -170,12 +170,34 @@ powershell -ExecutionPolicy Bypass -File launcher\install_extension.ps1
 ```python
 from examples.client import Edge
 
-e = Edge()                       # 自动读运行数据目录的 token.txt
+e = Edge()                       # 端口/令牌自动读 extension\config.json 和运行数据目录
 tab = e.open("https://example.com")
 print(e.eval("document.title", tab_id=tab["tabId"])["value"])
 e.screenshot("shot.png", tab_id=tab["tabId"])
 e.close(tab["tabId"])
 ```
+
+### 接进 Codex / Claude 等 MCP 客户端
+
+`mcp/edge_bridge_mcp.py` 是一个零依赖的 stdio MCP 服务器，把上面这些能力包成
+13 个 `browser_*` 工具，模型直接就能驱动「装了插件的那个浏览器」。
+
+Codex 的 `~/.codex/config.toml` 加：
+
+```toml
+[mcp_servers.edge-bridge]
+command = 'C:/Users/…/python.exe'          # 任何 >=3.8 的 python
+args = ['D:/_Project/edge-ai-bridge/mcp/edge_bridge_mcp.py']
+```
+
+Claude Desktop 之类走同一思路（mcpServers / stdio）。验证：
+
+```powershell
+codex mcp list          # 看 edge-bridge 是否 enabled
+```
+
+前提仍然是**目标浏览器带着插件在跑**。让模型先调 `browser_status` 自检，
+连不上它会提示去跑 `launcher\launch_with_extension.ps1`。
 
 ---
 
@@ -515,6 +537,21 @@ Adblock / 密码管理器一起禁掉。专用 profile 无所谓，但在「日�
 `launcher/check_extension.ps1` 现在会直接读 `disable_reasons`，被禁用就点名原因，
 不再让人对着「没心跳」三个常见原因瞎猜。
 
+### 坑 13：PowerShell 写的 config.json 带 BOM，Python 读不懂，端口悄悄回落
+
+`Set-Content -Encoding UTF8`（PowerShell 5.1）会在文件头写 `\xEF\xBB\xBF`。
+扩展用 `fetch()` 读它没事（浏览器自己吃 BOM），但 `client.py` / MCP 服务器用
+`json.load(open(..., encoding="utf-8"))` 读同一个文件会直接 `JSONDecodeError`，
+于是端口回落到默认 8800 —— 而桥接明明跑在 8801。症状：「桥接活着、浏览器活着、
+客户端说连不上 8800」。
+
+两头都修了：
+
+- **写入端**统一改 `[System.IO.File]::WriteAllText(..., (New-Object System.Text.UTF8Encoding($false)))`
+  （无 BOM）。包括 `launch_hidden.ps1` 往浏览器 `Preferences` 里写的那处 ——
+  给浏览器自己的配置文件写 BOM 更危险。
+- **读取端**改 `encoding="utf-8-sig"`（有 BOM 摘掉，没有 BOM 不报错），旧文件不用迁移。
+
 ## 心得
 
 ### 用户的浏览器不是你的浏览器
@@ -648,6 +685,8 @@ edge-ai-bridge/
 ├── examples/
 │   ├── client.py               # CLI + 可导入的库
 │   └── demo.py                 # 完整流程演示
+├── mcp/
+│   └── edge_bridge_mcp.py      # MCP 服务器（stdio，零依赖），给 Codex / Claude 用
 └── docs/
     └── PROTOCOL.md             # 通信协议
 ```

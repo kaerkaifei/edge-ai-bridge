@@ -65,7 +65,7 @@ New-Item -ItemType Directory -Path $Profile -Force | Out-Null
 $cfgBackup = $null
 $cfgFile = Join-Path $Ext "config.json"
 if (Test-Path $cfgFile) { $cfgBackup = Get-Content $cfgFile -Raw }
-@{ port = $Port; token = $Token } | ConvertTo-Json -Compress | Set-Content $cfgFile -Encoding UTF8 -NoNewline
+[System.IO.File]::WriteAllText($cfgFile, (@{ port = $Port; token = $Token } | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
 
 $logFile = Join-Path $ServerDir "selftest.log"
 Remove-Item $logFile -ErrorAction SilentlyContinue
@@ -110,7 +110,7 @@ if (-not $connected) {
     Write-Host "   2) 看日志：$logFile"
     Write-Host "   3) 加 -Verbose 手动开可见窗口跑 launch_setup.ps1 看 edge://extensions"
     if (Test-Path $logFile) { Get-Content $logFile -Tail 15 }
-    if ($cfgBackup) { Set-Content $cfgFile $cfgBackup -Encoding UTF8 -NoNewline }
+    if ($cfgBackup) { [System.IO.File]::WriteAllText($cfgFile, $cfgBackup, (New-Object System.Text.UTF8Encoding($false))) }
     else { Remove-Item $cfgFile -Force -ErrorAction SilentlyContinue }
     exit 1
 }
@@ -173,7 +173,7 @@ Start-Sleep -Milliseconds 500
 Remove-Item $Profile -Recurse -Force -ErrorAction SilentlyContinue
 # 恢复配置：原来有就还原，原来没有就删掉，别把自己的测试配置留在仓库里
 if ($cfgBackup) {
-    Set-Content $cfgFile $cfgBackup -Encoding UTF8 -NoNewline
+    [System.IO.File]::WriteAllText($cfgFile, $cfgBackup, (New-Object System.Text.UTF8Encoding($false)))
 } else {
     Remove-Item $cfgFile -Force -ErrorAction SilentlyContinue
 }

@@ -40,7 +40,13 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-TOKEN_FILE = os.path.join(ROOT, "server", "token.txt")
+# 令牌 0.2.1 起在运行数据目录（%LOCALAPPDATA%\EdgeAiBridge），
+# 旧版在 server/ 里 —— 两个都读，升级不掉登录态。
+RUNTIME_DIR = os.environ.get("BRIDGE_RUNTIME_DIR") or os.path.join(
+    os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "EdgeAiBridge"
+)
+TOKEN_FILE = os.path.join(RUNTIME_DIR, "token.txt")
+LEGACY_TOKEN_FILE = os.path.join(ROOT, "server", "token.txt")
 CONFIG_FILE = os.path.join(ROOT, "extension", "config.json")
 
 DEFAULT_PORT = 8800
@@ -48,6 +54,25 @@ DEFAULT_PORT = 8800
 # 关键：显式禁用代理。系统里一旦设了 HTTP_PROXY，
 # urllib 会把 127.0.0.1 的请求也丢给代理，直接 WinError 10053。
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _read_config():
+    """extension/config.json —— PowerShell 写的文件常带 UTF-8 BOM，用 utf-8-sig 读。"""
+    try:
+        with open(CONFIG_FILE, encoding="utf-8-sig") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _default_port():
+    env = os.environ.get("BRIDGE_PORT", "").strip()
+    if env.isdigit():
+        return int(env)
+    try:
+        return int(_read_config().get("port") or DEFAULT_PORT)
+    except (TypeError, ValueError):
+        return DEFAULT_PORT
 
 
 class BridgeError(RuntimeError):
@@ -58,28 +83,23 @@ def _read_token():
     t = os.environ.get("BRIDGE_TOKEN", "").strip()
     if t:
         return t
-    if os.path.exists(TOKEN_FILE):
-        try:
-            with open(TOKEN_FILE, encoding="utf-8") as f:
-                t = f.read().strip()
-            if t:
-                return t
-        except OSError:
-            pass
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, encoding="utf-8") as f:
-                return str(json.load(f).get("token") or "").strip()
-        except (OSError, ValueError):
-            pass
-    return ""
+    for path in (TOKEN_FILE, LEGACY_TOKEN_FILE):
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8-sig") as f:
+                    t = f.read().strip()
+                if t:
+                    return t
+            except OSError:
+                pass
+    return str(_read_config().get("token") or "").strip()
 
 
 class Edge:
     """一个桥接服务的最小客户端。"""
 
-    def __init__(self, host="127.0.0.1", port=DEFAULT_PORT, token=None, timeout=30.0):
-        self.base = "http://%s:%d" % (host, port)
+    def __init__(self, host="127.0.0.1", port=None, token=None, timeout=30.0):
+        self.base = "http://%s:%d" % (host, port if port is not None else _default_port())
         self.token = _read_token() if token is None else token
         self.timeout = timeout
 

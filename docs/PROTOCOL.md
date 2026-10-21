@@ -1,4 +1,4 @@
-﻿# 通信协议
+# 通信协议
 
 桥接服务和扩展之间只有 4 个 HTTP 接口。全部走 `127.0.0.1`，请求头带 `X-Bridge-Token`。
 
@@ -43,7 +43,7 @@ AI 侧等超时就知道出问题了，不会静默丢任务。
 ```json
 {
   "ok": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "active": "iXXX",
   "instances": ["iXXX"],
   "instances_detail": { "iXXX": { "last_seen": 1792367578.5, "browser": "edge" } },

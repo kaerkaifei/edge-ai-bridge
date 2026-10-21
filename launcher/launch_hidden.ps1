@@ -197,7 +197,8 @@ if (-not $Token) {
 # ---------- 3. 写 config.json，让扩展一启动就拿到配置 ----------
 
 $cfgObj = [ordered]@{ port = $Port; token = $Token }
-$cfgObj | ConvertTo-Json -Compress | Set-Content -Path $ConfigFile -Encoding UTF8 -NoNewline
+# 不带 BOM 的 UTF-8：BOM 会让 Python json.load 抛异常，客户端悄悄回落到 8800
+[System.IO.File]::WriteAllText($ConfigFile, ($cfgObj | ConvertTo-Json -Compress), (New-Object System.Text.UTF8Encoding($false)))
 Write-Step "已写入扩展配置：$ConfigFile"
 
 # ---------- 4. 准备 profile ----------
@@ -272,7 +273,7 @@ if (Test-Path $prefFile) {
             $pref.profile.exit_type = "Normal"
             $pref.profile.exited_cleanly = $true
         }
-        $pref | ConvertTo-Json -Depth 20 -Compress | Set-Content -Path $prefFile -Encoding UTF8
+        [System.IO.File]::WriteAllText($prefFile, ($pref | ConvertTo-Json -Depth 20 -Compress), (New-Object System.Text.UTF8Encoding($false)))
     } catch { }
 }
 
